@@ -1,0 +1,51 @@
+title: Brute Force Login Attempts Against ZTA Gateway
+id: 8f1a3c72-4b9e-4d5a-9c2b-1e8f7a3d6b91
+status: experimental
+description: |
+  Detects repeated authentication failures against the ZTA Gateway login
+  endpoint from a single source IP. This is characteristic of credential
+  brute-force or password-spray attacks (MITRE ATT&CK T1110).
+
+references:
+  - https://attack.mitre.org/techniques/T1110/
+  - https://attack.mitre.org/techniques/T1110/003/  # Password Spraying
+
+author: ZTA Overlay Framework
+date: 2026/09/28
+
+tags:
+  - attack.credential_access
+  - attack.t1110
+  - attack.t1110.003
+
+logsource:
+  product: zta
+  service: gateway
+
+detection:
+  # Single-event signature: a failed login
+  selection:
+    event.action: auth.login.failure
+
+  # Which fields the harness will use to group + count
+  group_by:
+    - source.ip
+
+  # Aggregation threshold (interpreted by harness, not by Sigma engine)
+  aggregation:
+    count: 5
+    window_seconds: 60
+
+  condition: selection
+
+fields:
+  - event.action
+  - user.name
+  - source.ip
+  - trace.id
+
+falsepositives:
+  - Legitimate user forgetting password repeatedly
+  - Automated test suites with misconfigured credentials
+
+level: medium

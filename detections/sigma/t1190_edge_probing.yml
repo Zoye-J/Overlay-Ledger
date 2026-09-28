@@ -1,0 +1,67 @@
+title: Edge Router Service Enumeration or Path Probing
+id: 6d5b1e94-7c2a-4e8f-b3d9-8f1a2c7e4b56
+status: experimental
+description: |
+  Detects attempts to enumerate services or probe for misconfigured paths
+  against the ZTA Edge Router — the only externally reachable component.
+  Characteristic of MITRE ATT&CK T1190 (Exploit Public-Facing Application)
+  and T1046 (Network Service Discovery).
+
+references:
+  - https://attack.mitre.org/techniques/T1190/
+  - https://attack.mitre.org/techniques/T1046/
+
+author: ZTA Overlay Framework
+date: 2026/09/28
+
+tags:
+  - attack.initial_access
+  - attack.discovery
+  - attack.t1190
+  - attack.t1046
+
+logsource:
+  product: zta
+  service: edge_router
+
+detection:
+  # Pattern 1: requests for non-existent services
+  selection_unknown_target:
+    event.action: router.target.unknown
+
+  # Pattern 2: requests to suspicious paths (path enumeration)
+  selection_suspicious_path:
+    event.action: router.request.received
+    http.path|contains:
+      - '/.env'
+      - '/.git'
+      - '/admin'
+      - '/wp-admin'
+      - '/phpmyadmin'
+      - '/api/v1/..'
+      - '/actuator'
+      - '/console'
+
+  group_by:
+    - source.ip
+
+  aggregation:
+    count: 3
+    window_seconds: 60
+
+  condition: selection_unknown_target or selection_suspicious_path
+
+fields:
+  - event.action
+  - http.method
+  - http.path
+  - http.user_agent
+  - source.ip
+  - target.service
+  - trace.id
+
+falsepositives:
+  - Port scanners on the same subnet (if not isolated)
+  - Vulnerability scanners running from authorized hosts
+
+level: high

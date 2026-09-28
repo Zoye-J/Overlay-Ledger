@@ -1,0 +1,62 @@
+title: Suspicious JWT Token Reuse or Privilege Escalation Attempt
+id: 2c7e9b41-5a3d-4f82-8e1c-9d4b6a8f2e73
+status: experimental
+description: |
+  Detects two related patterns that indicate abuse of valid JWT tokens
+  (MITRE ATT&CK T1078 - Valid Accounts):
+  
+  1. Repeated invalid/expired tokens from a single source — usually
+     token tampering or replay of stolen/expired credentials.
+  
+  2. A user obtaining a token and immediately attempting to access
+     resources beyond their clearance — indicates the token was
+     issued under false pretenses or reused post-privilege-change.
+
+references:
+  - https://attack.mitre.org/techniques/T1078/
+  - https://attack.mitre.org/techniques/T1550/001/  # Use Alternate Auth Material
+
+author: ZTA Overlay Framework
+date: 2026/09/28
+
+tags:
+  - attack.defense_evasion
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.t1078
+  - attack.t1550.001
+
+logsource:
+  product: zta
+
+detection:
+  # Pattern 1: repeated invalid tokens
+  selection_invalid:
+    event.action: auth.token.invalid
+
+  # Pattern 2: legitimate token + immediate clearance denial
+  selection_escalation:
+    event.action: authz.clearance.denied
+
+  group_by:
+    - source.ip
+
+  aggregation:
+    count: 3
+    window_seconds: 120
+
+  condition: selection_invalid or selection_escalation
+
+fields:
+  - event.action
+  - user.name
+  - user.clearance
+  - target.document_id
+  - source.ip
+  - trace.id
+
+falsepositives:
+  - Clock skew causing valid tokens to appear expired
+  - Legitimate users probing features they don't have access to
+
+level: high
