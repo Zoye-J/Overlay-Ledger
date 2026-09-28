@@ -9,6 +9,8 @@ import requests
 from flask import Flask, request, Response
 from flask_cors import CORS
 import ssl
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)

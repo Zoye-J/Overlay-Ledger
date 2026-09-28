@@ -1,0 +1,179 @@
+{
+  "name": "ZTA Overlay Framework — Detection Coverage",
+  "versions": {
+    "attack": "15",
+    "navigator": "4.9.1",
+    "layer": "4.5"
+  },
+  "domain": "enterprise-attack",
+  "description": "Detection coverage for the ZTA Overlay Network. Green = Sigma rule deployed and validated via atomic testing. Red = technique is relevant to ZTA threat model but no detection exists. Gray = not applicable / not covered.",
+  "filters": {
+    "platforms": ["Linux", "Windows", "Network"]
+  },
+  "sorting": 0,
+  "layout": {
+    "layout": "side",
+    "aggregateFunction": "average",
+    "showID": false,
+    "showName": true,
+    "showAggregateScores": false,
+    "countUnscored": false
+  },
+  "hideDisabled": false,
+  "techniques": [
+    {
+      "techniqueID": "T1110",
+      "tactic": "credential-access",
+      "color": "#4caf50",
+      "comment": "Sigma rule: t1110_brute_force_login.yml. Detects 5+ auth.login.failure events from same source IP within 60s. Validated via atomic password spray.",
+      "enabled": true,
+      "metadata": [
+        {"name": "rule", "value": "detections/sigma/t1110_brute_force_login.yml"},
+        {"name": "log_source", "value": "gateway"},
+        {"name": "event_actions", "value": "auth.login.failure"}
+      ],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1110.003",
+      "tactic": "credential-access",
+      "color": "#4caf50",
+      "comment": "Sub-technique coverage via parent T1110 rule.",
+      "enabled": true,
+      "metadata": [
+        {"name": "rule", "value": "detections/sigma/t1110_brute_force_login.yml"}
+      ],
+      "showSubtechniques": false
+    },
+    {
+      "techniqueID": "T1078",
+      "tactic": "defense-evasion",
+      "color": "#4caf50",
+      "comment": "Sigma rule: t1078_token_abuse.yml. Detects 3+ auth.token.invalid OR authz.clearance.denied events from same source IP within 120s.",
+      "enabled": true,
+      "metadata": [
+        {"name": "rule", "value": "detections/sigma/t1078_token_abuse.yml"},
+        {"name": "log_source", "value": "gateway, api_server"},
+        {"name": "event_actions", "value": "auth.token.invalid, authz.clearance.denied"}
+      ],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1078",
+      "tactic": "persistence",
+      "color": "#4caf50",
+      "comment": "Same rule as defense-evasion tactic mapping.",
+      "enabled": true,
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1078",
+      "tactic": "privilege-escalation",
+      "color": "#4caf50",
+      "comment": "Same rule as defense-evasion tactic mapping.",
+      "enabled": true,
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1078",
+      "tactic": "initial-access",
+      "color": "#4caf50",
+      "comment": "Same rule as defense-evasion tactic mapping.",
+      "enabled": true,
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1550.001",
+      "tactic": "defense-evasion",
+      "color": "#ffc107",
+      "comment": "Application Access Token — partially covered via T1078 rule (token.invalid and clearance.denied patterns). No dedicated rule yet.",
+      "enabled": true,
+      "metadata": [
+        {"name": "rule", "value": "detections/sigma/t1078_token_abuse.yml (partial)"}
+      ]
+    },
+    {
+      "techniqueID": "T1190",
+      "tactic": "initial-access",
+      "color": "#4caf50",
+      "comment": "Sigma rule: t1190_edge_probing.yml. Detects 3+ router.target.unknown OR suspicious-path requests from same source IP within 60s.",
+      "enabled": true,
+      "metadata": [
+        {"name": "rule", "value": "detections/sigma/t1190_edge_probing.yml"},
+        {"name": "log_source", "value": "edge_router"},
+        {"name": "event_actions", "value": "router.target.unknown, router.request.received"}
+      ]
+    },
+    {
+      "techniqueID": "T1046",
+      "tactic": "discovery",
+      "color": "#4caf50",
+      "comment": "Network Service Discovery — covered by t1190_edge_probing.yml (router.target.unknown enumeration).",
+      "enabled": true,
+      "metadata": [
+        {"name": "rule", "value": "detections/sigma/t1190_edge_probing.yml"}
+      ]
+    },
+    {
+      "techniqueID": "T1136",
+      "tactic": "persistence",
+      "color": "#f44336",
+      "comment": "Create Account — event taxonomy defines admin.user.created, but no Sigma rule exists yet. Controller enrollment events would also apply here.",
+      "enabled": true,
+      "metadata": [
+        {"name": "rule", "value": "(none — detection gap)"}
+      ]
+    },
+    {
+      "techniqueID": "T1087",
+      "tactic": "discovery",
+      "color": "#f44336",
+      "comment": "Account Discovery — admin.user.listed event exists in taxonomy but no rule deployed.",
+      "enabled": true,
+      "metadata": [
+        {"name": "rule", "value": "(none — detection gap)"}
+      ]
+    },
+    {
+      "techniqueID": "T1548",
+      "tactic": "privilege-escalation",
+      "color": "#f44336",
+      "comment": "Abuse Elevation Control — authz.clearance.denied exists but no dedicated escalation rule.",
+      "enabled": true,
+      "metadata": [
+        {"name": "rule", "value": "(none — detection gap)"}
+      ]
+    }
+  ],
+  "gradient": {
+    "colors": ["#ffffff", "#ffc107", "#4caf50"],
+    "minValue": 0,
+    "maxValue": 1
+  },
+  "legendItems": [
+    {"label": "Covered (Sigma rule deployed + validated)", "color": "#4caf50"},
+    {"label": "Partial coverage (related rule exists)", "color": "#ffc107"},
+    {"label": "Relevant but not detected (gap)", "color": "#f44336"}
+  ],
+  "metadata": [
+    {"name": "project", "value": "ZTA Overlay Framework — SOC Detection Lab"},
+    {"name": "author", "value": "See project README"},
+    {"name": "version", "value": "1.0"},
+    {"name": "validated_on", "value": "2026-09-29"}
+  ],
+  "links": [
+    {
+      "label": "Sigma Rules",
+      "url": "detections/sigma/"
+    },
+    {
+      "label": "Validation Harness",
+      "url": "detections/validate.py"
+    }
+  ],
+  "showTacticRowBackground": true,
+  "tacticRowBackground": "#dddddd",
+  "selectTechniquesAcrossTactics": true,
+  "selectSubtechniquesWithParent": false,
+  "selectVisibleTechniques": false
+}
