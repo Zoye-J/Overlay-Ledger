@@ -1,7 +1,8 @@
 service:
   name: "gateway"
   port: 5000
-  bind_host: "127.0.0.1"  # LOCALHOST ONLY - critical for ZTA overlay
+  bind_host: "127.0.0.1"
+
   
 local:
   edge_router_proxy_host: "127.0.0.1"

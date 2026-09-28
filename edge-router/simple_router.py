@@ -45,6 +45,22 @@ CORS(app, resources={
     }
 })
 
+# Create session with client certificate for mTLS to backend services
+def create_mtls_session():
+    """Create a session with client certificate for service-to-service communication"""
+    session = requests.Session()
+    
+    client_cert_path = os.path.join(BASE_DIR, 'certs', 'identities', 'gateway', 'gateway.crt')
+    client_key_path = os.path.join(BASE_DIR, 'certs', 'identities', 'gateway', 'gateway.key')
+    
+    if os.path.exists(client_cert_path) and os.path.exists(client_key_path):
+        session.cert = (client_cert_path, client_key_path)
+    
+    session.verify = False  # Allow self-signed certs for internal services
+    return session
+
+mtls_session = create_mtls_session()
+
 @app.route('/', defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
 @app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
 def proxy_all(path):
@@ -79,13 +95,13 @@ def proxy_all(path):
             if k.lower() not in ['x-target-service', 'host', 'content-length']:
                 forward_headers[k] = v
         
-        resp = requests.request(
+        # Use mTLS session for outgoing requests to services
+        resp = mtls_session.request(
             method=request.method,
             url=full_url,
             headers=forward_headers,
             data=request.get_data(),
-            timeout=30,
-            verify=False  # Allow self-signed certs for internal services
+            timeout=30
         )
         
         response = Response(resp.content, status=resp.status_code)
@@ -119,13 +135,15 @@ if __name__ == '__main__':
     print("ZTA Edge Router - HTTPS Proxy")
     print("=" * 60)
     print(f"Listening on: https://0.0.0.0:{CONFIG['local']['proxy_port']}")
+    print("  • Browser connections: HTTPS (no client certificate required)")
+    print("  • Backend connections: mTLS (client certificate sent)")
     print("=" * 60)
     
     cert_path = os.path.join(BASE_DIR, 'certs', 'identities', 'gateway', 'gateway.crt')
     key_path = os.path.join(BASE_DIR, 'certs', 'identities', 'gateway', 'gateway.key')
     
     if os.path.exists(cert_path) and os.path.exists(key_path):
-        # Simple SSL context - NO client certificate required
+        # Simple SSL context - NO client certificate required from browsers
         ssl_context = (cert_path, key_path)
         
         app.run(host='0.0.0.0', port=CONFIG['local']['proxy_port'], 

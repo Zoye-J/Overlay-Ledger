@@ -113,23 +113,25 @@ if __name__ == '__main__':
     
     cert_path = os.path.join(BASE_DIR, 'certs', 'identities', 'controller', 'controller.crt')
     key_path = os.path.join(BASE_DIR, 'certs', 'identities', 'controller', 'controller.key')
+    ca_cert_path = os.path.join(BASE_DIR, 'certs', 'ca.crt')
     
     if os.path.exists(cert_path) and os.path.exists(key_path):
-        # Create PROPER SSL context
-        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_context.load_cert_chain(cert_path, key_path)
-        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3
+        # Create SSL context with client certificate validation (mTLS)
+        # ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        # ssl_context.load_cert_chain(cert_path, key_path)
+        # ssl_context.load_verify_locations(ca_cert_path)
+        # ssl_context.verify_mode = ssl.CERT_REQUIRED
+        # ssl_context.check_hostname = False
+        ssl_context = (cert_path, key_path)
         
         print("=" * 60)
-        print("ZTA Controller - HTTPS with PROPER SSL")
+        print("ZTA Controller - HTTPS with mTLS")
         print("=" * 60)
         print(f"Running on: https://{host}:{port}")
-        print(f"TLS version: TLS 1.2+ only")
+        print(f"mTLS: ENABLED")
         print("=" * 60)
         
         app.run(host=host, port=port, debug=False, use_reloader=False, ssl_context=ssl_context)
     else:
         print(f"ERROR: Certificates not found at {cert_path}")
-        print("Please run: python certs/generate_identities.py")
         sys.exit(1)

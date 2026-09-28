@@ -1,11 +1,23 @@
+# ─── Web framework ──────────────────────────────────────────────
 Flask==2.3.3
+Flask-CORS==4.0.0
 Flask-SQLAlchemy==3.1.1
+Werkzeug==3.0.0
+
+# ─── Config / environment ───────────────────────────────────────
 PyYAML==6.0.2
-requests==2.31.0
 python-dotenv==1.0.1
+
+# ─── Crypto / auth ──────────────────────────────────────────────
 cryptography==42.0.5
 pyOpenSSL==24.1.0
-Werkzeug==3.0.0
 PyJWT==2.8.0
-Flask-CORS==4.0.0
-pyOpenSSL==24.1.0
+
+# ─── HTTP client ────────────────────────────────────────────────
+requests==2.31.0
+
+# ─── SOC / detection tooling (Phase 1+) ─────────────────────────
+pytest==8.3.3
+rich==13.9.4
+sigma-cli==1.0.4
+pySigma==0.11.19

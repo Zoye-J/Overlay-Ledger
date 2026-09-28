@@ -26,3 +26,13 @@ uploads/
 # System files
 .DS_Store
 Thumbs.db
+
+# ZTA runtime logs — structured JSONL, regenerated at runtime
+logs/*.jsonl
+logs/*.jsonl.*
+logs/*.log
+
+# Python
+
+*.pyc
+.pytest_cache/

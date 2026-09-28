@@ -8,15 +8,27 @@ import jwt
 import hashlib
 import sqlite3
 import secrets
+import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, request, jsonify, session, render_template
 from flask_cors import CORS
-#from services.service_auth import require_service_token, get_service_token
 
-# Add parent to path
+# Add parent to path BEFORE importing shared
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, BASE_DIR)
+
+# ─── Structured logging ─────────────────────────────────────────────
+from shared.logging_config import setup_logger, set_trace_id, emit_event, get_trace_id
+from shared.events import (
+    AUTH_LOGIN_SUCCESS, AUTH_LOGIN_FAILURE, AUTH_LOGOUT,
+    AUTH_TOKEN_ISSUED, AUTH_TOKEN_REFRESHED, AUTH_TOKEN_INVALID,
+    AUTH_TOKEN_EXPIRED, AUTH_TOKEN_MISSING, AUTH_TOKEN_REVOKED,
+    ADMIN_USER_CREATED, ADMIN_USER_LISTED, ADMIN_ACCESS_DENIED,
+    SERVICE_STARTUP,
+)
+
+logger = setup_logger("gateway")
 
 # Load config - NO HARDCODES
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.yaml')
@@ -38,7 +50,6 @@ app = Flask(__name__,
     static_folder=os.path.join(BASE_DIR, 'static')
 )
 
-
 # JWT Configuration
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['JWT_EXPIRY_HOURS'] = SERVICE_CONFIG.get('jwt', {}).get('expiry_hours', 8)
@@ -49,12 +60,12 @@ app.config['JWT_REFRESH_EXPIRY_DAYS'] = SERVICE_CONFIG.get('jwt', {}).get('refre
 DB_PATH = os.path.join(BASE_DIR, 'database', 'gateway.db')
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
+
 def init_db():
     """Initialize database tables"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
-    # Users table
+
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   username TEXT UNIQUE NOT NULL,
@@ -65,8 +76,7 @@ def init_db():
                   mfa_secret TEXT,
                   is_active BOOLEAN DEFAULT 1,
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    
-    # User sessions table for JWT tracking
+
     c.execute('''CREATE TABLE IF NOT EXISTS user_sessions
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER NOT NULL,
@@ -76,21 +86,21 @@ def init_db():
                   expires_at TIMESTAMP NOT NULL,
                   last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   FOREIGN KEY (user_id) REFERENCES users(id))''')
-    
-    # Blacklisted tokens table (for logout)
+
     c.execute('''CREATE TABLE IF NOT EXISTS token_blacklist
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   token TEXT NOT NULL,
                   blacklisted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    
+
     conn.commit()
     conn.close()
 
+
 init_db()
+
 
 def generate_tokens(user_id, username, full_name, department, clearance_level):
     """Generate access and refresh JWT tokens"""
-    # Access token (short-lived)
     access_expiry = datetime.utcnow() + timedelta(hours=app.config['JWT_EXPIRY_HOURS'])
     access_token = jwt.encode({
         'user_id': user_id,
@@ -102,8 +112,7 @@ def generate_tokens(user_id, username, full_name, department, clearance_level):
         'exp': access_expiry,
         'iat': datetime.utcnow()
     }, app.config['SECRET_KEY'], algorithm=app.config['JWT_ALGORITHM'])
-    
-    # Refresh token (longer-lived)
+
     refresh_expiry = datetime.utcnow() + timedelta(days=app.config['JWT_REFRESH_EXPIRY_DAYS'])
     refresh_token = jwt.encode({
         'user_id': user_id,
@@ -112,71 +121,110 @@ def generate_tokens(user_id, username, full_name, department, clearance_level):
         'exp': refresh_expiry,
         'iat': datetime.utcnow()
     }, app.config['SECRET_KEY'], algorithm=app.config['JWT_ALGORITHM'])
-    
+
     return access_token, refresh_token, access_expiry
+
 
 def token_required(f):
     """Decorator to verify JWT token"""
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization')
-        
+
         if not token:
+            emit_event(
+                logger, AUTH_TOKEN_MISSING,
+                message="Request with no Authorization header",
+                http={"method": request.method, "path": request.path},
+                source={"ip": request.remote_addr},
+            )
             return jsonify({'error': 'Token is missing'}), 401
-        
-        # Remove 'Bearer ' prefix if present
+
         if token.startswith('Bearer '):
             token = token[7:]
-        
+
         try:
             # Check if token is blacklisted
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             c.execute('SELECT id FROM token_blacklist WHERE token = ?', (token,))
-            if c.fetchone():
-                conn.close()
-                return jsonify({'error': 'Token has been revoked'}), 401
+            is_blacklisted = c.fetchone() is not None
             conn.close()
-            
+
+            if is_blacklisted:
+                emit_event(
+                    logger, AUTH_TOKEN_REVOKED,
+                    message="Blacklisted token used",
+                    http={"method": request.method, "path": request.path},
+                    source={"ip": request.remote_addr},
+                )
+                return jsonify({'error': 'Token has been revoked'}), 401
+
             # Decode and verify token
             data = jwt.decode(
-                token, 
-                app.config['SECRET_KEY'], 
+                token,
+                app.config['SECRET_KEY'],
                 algorithms=[app.config['JWT_ALGORITHM']]
             )
-            
-            # Verify it's an access token
+
             if data.get('type') != 'access':
+                emit_event(
+                    logger, AUTH_TOKEN_INVALID,
+                    message="Token is not an access token",
+                    http={"method": request.method, "path": request.path},
+                    source={"ip": request.remote_addr},
+                )
                 return jsonify({'error': 'Invalid token type'}), 401
-            
+
             request.user = data
-            
+
             # Update last activity
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute('''UPDATE user_sessions 
-                         SET last_activity = CURRENT_TIMESTAMP 
+            c.execute('''UPDATE user_sessions
+                         SET last_activity = CURRENT_TIMESTAMP
                          WHERE jwt_token = ?''', (token,))
             conn.commit()
             conn.close()
-            
+
         except jwt.ExpiredSignatureError:
+            emit_event(
+                logger, AUTH_TOKEN_EXPIRED,
+                message="Expired token presented",
+                http={"method": request.method, "path": request.path},
+                source={"ip": request.remote_addr},
+            )
             return jsonify({'error': 'Token has expired'}), 401
+
         except jwt.InvalidTokenError as e:
+            emit_event(
+                logger, AUTH_TOKEN_INVALID,
+                message=f"Invalid token: {e}",
+                http={"method": request.method, "path": request.path},
+                source={"ip": request.remote_addr},
+            )
             return jsonify({'error': f'Invalid token: {str(e)}'}), 401
-        
+
         return f(*args, **kwargs)
     return decorated
 
-@app.route('/')
-def index():
-    """Serve the main page"""
-    return render_template('overlay_dashboard.html')
 
-@app.route('/login')
-def login_page():
-    """Serve login page"""
-    return render_template('overlay_login.html')
+# ─── Trace ID propagation ───────────────────────────────────────────
+@app.before_request
+def _assign_trace_id():
+    """Assign a trace_id to every request, honor inbound X-Trace-Id."""
+    incoming = request.headers.get("X-Trace-Id")
+    trace_id = incoming or str(uuid.uuid4())
+    set_trace_id(trace_id)
+
+
+@app.after_request
+def _echo_trace_id(response):
+    """Expose trace_id for correlation across the overlay."""
+    tid = get_trace_id()
+    if tid:
+        response.headers["X-Trace-Id"] = tid
+    return response
 
 
 # Simple CORS - single handler
@@ -187,44 +235,48 @@ def add_cors_headers(response):
         response.headers['Access-Control-Allow-Origin'] = origin
     else:
         response.headers['Access-Control-Allow-Origin'] = 'https://localhost:5000'
-    
+
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Trace-Id'
     return response
+
+
+@app.route('/')
+def index():
+    return render_template('overlay_dashboard.html')
+
+
+@app.route('/login')
+def login_page():
+    return render_template('overlay_login.html')
+
 
 @app.route('/health', methods=['GET'])
 @token_required
 def gateway_health():
-    """Health check for gateway service"""
-    return jsonify({
-        'status': 'healthy',
-        'service': 'gateway',
-        'port': 5000,
-        'protocol': 'https'
-    })
+    return jsonify({'status': 'healthy', 'service': 'gateway', 'port': 5000, 'protocol': 'https'})
+
 
 @app.route('/api/v1/auth/health', methods=['GET'])
 def auth_health():
-    """Health check for auth service"""
     return jsonify({'status': 'healthy', 'service': 'gateway'})
+
 
 @app.route('/dashboard')
 def dashboard_page():
-    """Serve user dashboard page"""
-    # Check for token in query parameter or header
     token = request.args.get('token')
     if token:
-        # Store token in session or pass to template
-        return render_template('overlay_user_dashboard.html', user=request.user if hasattr(request, 'user') else None, token=token)
-    
-    # Try to get from header
+        return render_template('overlay_user_dashboard.html',
+                               user=request.user if hasattr(request, 'user') else None,
+                               token=token)
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         token = auth_header[7:]
-        return render_template('overlay_user_dashboard.html', user=request.user if hasattr(request, 'user') else None, token=token)
-    
-    # No token found
+        return render_template('overlay_user_dashboard.html',
+                               user=request.user if hasattr(request, 'user') else None,
+                               token=token)
     return render_template('overlay_user_dashboard.html', user=None, token=None)
+
 
 @app.route('/api/v1/auth/login', methods=['POST'])
 def login():
@@ -232,24 +284,36 @@ def login():
     data = request.json
     username = data.get('username')
     password = data.get('password')
-    
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''SELECT id, username, password_hash, full_name, department, clearance_level 
+    c.execute('''SELECT id, username, password_hash, full_name, department, clearance_level
                  FROM users WHERE username = ? AND is_active = 1''', (username,))
     user = c.fetchone()
-    
+
     if not user:
         conn.close()
+        emit_event(
+            logger, AUTH_LOGIN_FAILURE,
+            message=f"Login failed: unknown user '{username}'",
+            user={"name": username},
+            source={"ip": request.remote_addr},
+            http={"method": "POST", "path": "/api/v1/auth/login"},
+        )
         return jsonify({'error': 'Invalid credentials'}), 401
-    
-    # Verify password (using SHA256 - upgrade to bcrypt in production)
+
     password_hash = hashlib.sha256(password.encode()).hexdigest()
     if password_hash != user[2]:
         conn.close()
+        emit_event(
+            logger, AUTH_LOGIN_FAILURE,
+            message=f"Login failed: bad password for '{username}'",
+            user={"name": username},
+            source={"ip": request.remote_addr},
+            http={"method": "POST", "path": "/api/v1/auth/login"},
+        )
         return jsonify({'error': 'Invalid credentials'}), 401
-    
-    # Generate JWT tokens
+
     access_token, refresh_token, expiry = generate_tokens(
         user_id=user[0],
         username=user[1],
@@ -257,19 +321,34 @@ def login():
         department=user[4],
         clearance_level=user[5]
     )
-    
-    # Store session in database
+
     c.execute('''INSERT INTO user_sessions (user_id, jwt_token, refresh_token, expires_at)
                  VALUES (?, ?, ?, ?)''', (user[0], access_token, refresh_token, expiry))
     conn.commit()
     conn.close()
-    
+
+    # Emit both events — order matters for readability in logs
+    emit_event(
+        logger, AUTH_LOGIN_SUCCESS,
+        message=f"Login success: '{username}'",
+        user={"id": user[0], "name": username,
+              "department": user[4], "clearance": user[5]},
+        source={"ip": request.remote_addr},
+    )
+    emit_event(
+        logger, AUTH_TOKEN_ISSUED,
+        message=f"Access token issued for '{username}'",
+        user={"id": user[0], "name": username},
+        source={"ip": request.remote_addr},
+        token={"type": "access", "expires_in_hours": app.config['JWT_EXPIRY_HOURS']},
+    )
+
     return jsonify({
         'status': 'success',
         'access_token': access_token,
         'refresh_token': refresh_token,
         'token_type': 'Bearer',
-        'expires_in': app.config['JWT_EXPIRY_HOURS'] * 3600,  # in seconds
+        'expires_in': app.config['JWT_EXPIRY_HOURS'] * 3600,
         'user': {
             'id': user[0],
             'username': user[1],
@@ -279,38 +358,42 @@ def login():
         }
     })
 
+
 @app.route('/api/v1/auth/refresh', methods=['POST'])
 def refresh_token():
     """Refresh an expired access token using refresh token"""
     data = request.json
     refresh_token = data.get('refresh_token')
-    
+
     if not refresh_token:
         return jsonify({'error': 'Refresh token is missing'}), 401
-    
+
     try:
-        # Decode refresh token
         data = jwt.decode(
             refresh_token,
             app.config['SECRET_KEY'],
             algorithms=[app.config['JWT_ALGORITHM']]
         )
-        
+
         if data.get('type') != 'refresh':
+            emit_event(
+                logger, AUTH_TOKEN_INVALID,
+                message="Token is not a refresh token",
+                http={"method": request.method, "path": request.path},
+                source={"ip": request.remote_addr},
+            )
             return jsonify({'error': 'Invalid token type'}), 401
-        
-        # Get user info from database
+
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute('''SELECT id, username, full_name, department, clearance_level 
+        c.execute('''SELECT id, username, full_name, department, clearance_level
                      FROM users WHERE id = ? AND is_active = 1''', (data['user_id'],))
         user = c.fetchone()
         conn.close()
-        
+
         if not user:
             return jsonify({'error': 'User not found'}), 401
-        
-        # Generate new access token
+
         new_access_token, _, new_expiry = generate_tokens(
             user_id=user[0],
             username=user[1],
@@ -318,26 +401,45 @@ def refresh_token():
             department=user[3],
             clearance_level=user[4]
         )
-        
-        # Update session in database
+
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute('''UPDATE user_sessions 
+        c.execute('''UPDATE user_sessions
                      SET jwt_token = ?, expires_at = ?, last_activity = CURRENT_TIMESTAMP
                      WHERE refresh_token = ?''', (new_access_token, new_expiry, refresh_token))
         conn.commit()
         conn.close()
-        
+
+        emit_event(
+            logger, AUTH_TOKEN_REFRESHED,
+            message=f"Token refreshed for '{user[1]}'",
+            user={"id": user[0], "name": user[1]},
+            source={"ip": request.remote_addr},
+        )
+
         return jsonify({
             'access_token': new_access_token,
             'token_type': 'Bearer',
             'expires_in': app.config['JWT_EXPIRY_HOURS'] * 3600
         })
-        
+
     except jwt.ExpiredSignatureError:
+        emit_event(
+            logger, AUTH_TOKEN_EXPIRED,
+            message="Expired refresh token presented",
+            http={"method": request.method, "path": request.path},
+            source={"ip": request.remote_addr},
+        )
         return jsonify({'error': 'Refresh token has expired, please login again'}), 401
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        emit_event(
+            logger, AUTH_TOKEN_INVALID,
+            message=f"Invalid refresh token: {e}",
+            http={"method": request.method, "path": request.path},
+            source={"ip": request.remote_addr},
+        )
         return jsonify({'error': 'Invalid refresh token'}), 401
+
 
 @app.route('/api/v1/auth/logout', methods=['POST'])
 @token_required
@@ -346,49 +448,67 @@ def logout():
     token = request.headers.get('Authorization')
     if token and token.startswith('Bearer '):
         token = token[7:]
-    
-    # Add token to blacklist
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('INSERT INTO token_blacklist (token) VALUES (?)', (token,))
-    
-    # Remove session
     c.execute('DELETE FROM user_sessions WHERE jwt_token = ?', (token,))
     conn.commit()
     conn.close()
-    
+
+    emit_event(
+        logger, AUTH_LOGOUT,
+        message=f"User logged out: '{request.user.get('username')}'",
+        user={"id": request.user.get("user_id"), "name": request.user.get("username")},
+        source={"ip": request.remote_addr},
+    )
+
     return jsonify({'status': 'success', 'message': 'Logged out successfully'})
+
 
 @app.route('/api/v1/auth/me', methods=['GET'])
 @token_required
 def get_current_user():
-    """Get current user information from token"""
     return jsonify(request.user)
+
 
 @app.route('/api/v1/auth/verify', methods=['GET'])
 @token_required
 def verify_token():
-    """Verify if current token is valid"""
     return jsonify({
         'valid': True,
         'user': request.user,
         'expires_at': request.user.get('exp')
     })
 
-# Admin endpoints for user management
+
 @app.route('/api/v1/admin/users', methods=['GET'])
 @token_required
 def list_users():
-    """List all users (admin only - requires TOP_SECRET clearance)"""
     if request.user.get('clearance_level') != 'TOP_SECRET':
+        emit_event(
+            logger, ADMIN_ACCESS_DENIED,
+            message=f"Non-admin attempted to list users: '{request.user.get('username')}'",
+            user={"id": request.user.get('user_id'), "name": request.user.get('username'),
+                  "clearance": request.user.get('clearance_level')},
+            source={"ip": request.remote_addr},
+            http={"method": "GET", "path": "/api/v1/admin/users"},
+        )
         return jsonify({'error': 'Admin access required'}), 403
-    
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT id, username, full_name, department, clearance_level, is_active, created_at FROM users')
     users = c.fetchall()
     conn.close()
-    
+
+    emit_event(
+        logger, ADMIN_USER_LISTED,
+        message=f"Admin listed all users ({len(users)} records)",
+        user={"id": request.user.get('user_id'), "name": request.user.get('username')},
+        source={"ip": request.remote_addr},
+    )
+
     return jsonify({
         'users': [
             {
@@ -403,42 +523,56 @@ def list_users():
         ]
     })
 
+
 @app.route('/api/v1/admin/users', methods=['POST'])
 @token_required
 def create_user():
-    """Create a new user (admin only)"""
     if request.user.get('clearance_level') != 'TOP_SECRET':
+        emit_event(
+            logger, ADMIN_ACCESS_DENIED,
+            message=f"Non-admin attempted to create user: '{request.user.get('username')}'",
+            user={"id": request.user.get('user_id'), "name": request.user.get('username'),
+                  "clearance": request.user.get('clearance_level')},
+            source={"ip": request.remote_addr},
+            http={"method": "POST", "path": "/api/v1/admin/users"},
+        )
         return jsonify({'error': 'Admin access required'}), 403
-    
+
     data = request.json
     username = data.get('username')
     password = data.get('password')
     full_name = data.get('full_name')
     department = data.get('department')
     clearance_level = data.get('clearance_level', 'BASIC')
-    
-    # Validate clearance level
+
     valid_levels = [c['name'] for c in CLEARANCE_LEVELS['clearance_hierarchy']]
     if clearance_level not in valid_levels:
         return jsonify({'error': f'Invalid clearance level. Must be one of: {valid_levels}'}), 400
-    
-    # Validate department
+
     valid_depts = [d['id'] for d in DEPARTMENTS['bangladesh_government_departments']]
     if department not in valid_depts:
         return jsonify({'error': f'Invalid department. Must be one of: {valid_depts}'}), 400
-    
+
     password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
         c.execute('''INSERT INTO users (username, password_hash, full_name, department, clearance_level)
-                     VALUES (?, ?, ?, ?, ?)''', 
+                     VALUES (?, ?, ?, ?, ?)''',
                   (username, password_hash, full_name, department, clearance_level))
         conn.commit()
         user_id = c.lastrowid
         conn.close()
-        
+
+        emit_event(
+            logger, ADMIN_USER_CREATED,
+            message=f"Admin created user '{username}' ({clearance_level} / {department})",
+            user={"id": request.user.get('user_id'), "name": request.user.get('username')},
+            source={"ip": request.remote_addr},
+            new_user={"name": username, "department": department, "clearance": clearance_level},
+        )
+
         return jsonify({
             'status': 'success',
             'user_id': user_id,
@@ -448,21 +582,28 @@ def create_user():
         conn.close()
         return jsonify({'error': 'Username already exists'}), 400
 
+
 if __name__ == '__main__':
     host = SERVICE_CONFIG['service']['bind_host']
     port = SERVICE_CONFIG['service']['port']
-    
+
     cert_path = os.path.join(BASE_DIR, 'certs', 'identities', 'gateway', 'gateway.crt')
     key_path = os.path.join(BASE_DIR, 'certs', 'identities', 'gateway', 'gateway.key')
-    
+
     if os.path.exists(cert_path) and os.path.exists(key_path):
-        # Simple SSL context - NO client certificate required
         ssl_context = (cert_path, key_path)
-        
+
+        emit_event(
+            logger, SERVICE_STARTUP,
+            message=f"Gateway starting on https://{host}:{port}",
+            service={"name": "gateway", "port": port},
+        )
+
         print(f"=" * 60)
         print(f"Gateway Service - HTTPS")
         print(f"=" * 60)
         print(f"  • Binding to: https://{host}:{port}")
+        print(f"  • mTLS: Client certificates NOT required (Edge Router handles auth)")
         print(f"=" * 60)
         app.run(host=host, port=port, debug=False, use_reloader=False, ssl_context=ssl_context)
     else:
