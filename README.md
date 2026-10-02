@@ -122,8 +122,7 @@ Browser → Edge Router (:9999)
 
 ## Detection Engineering
 
-<p align="center">
-  ```mermaid
+```mermaid
 flowchart LR
     subgraph OFF["Offense"]
         A1["T1110.003<br/>Password Spray"]
@@ -167,7 +166,7 @@ flowchart LR
     class C1,C2,C3 detect
     class D1,D2,D3 proof
 ```
-</p>
+
 
 ### The pipeline
 
