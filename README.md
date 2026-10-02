@@ -1,10 +1,3 @@
-<!-- ════════════════════════════════════════════════════════════════════
-     HERO
-     ════════════════════════════════════════════════════════════════════ -->
-
-<p align="center">
-  <img src="docs/diagrams/zta-architecture.png" alt="Overlay Ledger — ZTA Overlay Architecture" width="900">
-</p>
 
 <h1 align="center">Overlay Ledger</h1>
 
@@ -349,7 +342,7 @@ Real bugs found and fixed during the observability work. These are documented be
 - The Controller expected `config/policies/access_policies.yaml` *(underscore)*, but the file on disk was `access-policies.yaml` *(hyphen)*.
 - The `except FileNotFoundError` branch in `check_policy()` returned `{"allowed": True}` : a fail-open design.
 
-**Impact** — Any misconfiguration or typo in the policy file path silently disabled all access control. The PDP would approve any policy check.
+**Impact** : Any misconfiguration or typo in the policy file path silently disabled all access control. The PDP would approve any policy check.
 
 **Fix:**
 
@@ -367,11 +360,11 @@ Fails closed, emits a high-severity event, and returns `503` (not `403`) so call
 
 > **Severity:** `medium`
 
-**Symptom** — Log events emitted during request handling showed `"service": {"name": "unknown"}` instead of the correct service name.
+**Symptom** : Log events emitted during request handling showed `"service": {"name": "unknown"}` instead of the correct service name.
 
-**Root cause** — The initial `logging_config.py` used a `ContextVar` to hold the service name. Flask runs each request in its own thread/context, and contextvars set at module load don't propagate to worker threads.
+**Root cause** : The initial `logging_config.py` used a `ContextVar` to hold the service name. Flask runs each request in its own thread/context, and contextvars set at module load don't propagate to worker threads.
 
-**Fix** — Attach the service name to the log record via a `logging.Filter` in `setup_logger()`, so it's available regardless of thread.
+**Fix** : Attach the service name to the log record via a `logging.Filter` in `setup_logger()`, so it's available regardless of thread.
 
 ### 3. Trace ID propagation gap
 
@@ -379,7 +372,7 @@ Fails closed, emits a high-severity event, and returns `503` (not `403`) so call
 
 **Symptom** — Early logs had no correlation across services. A single request produced three unrelated log lines.
 
-**Fix** — Added `@app.before_request` and `@app.after_request` hooks to all four services. The Edge Router forwards `X-Trace-Id` to backends; every service echoes it in responses. Now one request → four correlated events.
+**Fix** : Added `@app.before_request` and `@app.after_request` hooks to all four services. The Edge Router forwards `X-Trace-Id` to backends; every service echoes it in responses. Now one request → four correlated events.
 
 ---
 
