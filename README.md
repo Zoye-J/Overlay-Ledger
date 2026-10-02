@@ -61,12 +61,6 @@ Most portfolio security projects pick one side of the fence: build a secure syst
 
 ---
 
-## Architecture
-
-<p align="center">
-  <img src="docs/diagrams/zta-architecture.png" alt="ZTA Overlay Architecture" width="900">
-</p>
-
 ### Components
 
 | Component | Port | Bind | Role |
@@ -129,7 +123,50 @@ Browser → Edge Router (:9999)
 ## Detection Engineering
 
 <p align="center">
-  <img src="docs/diagrams/detection-pipeline.png" alt="Detection Pipeline" width="900">
+  ```mermaid
+flowchart LR
+    subgraph OFF["Offense"]
+        A1["T1110.003<br/>Password Spray"]
+        A2["T1078<br/>Token Abuse"]
+        A3["T1190<br/>Edge Probing"]
+    end
+
+    subgraph TELE["Telemetry"]
+        B1["<b>gateway</b><br/>auth.login.failure<br/>auth.token.invalid"]
+        B2["<b>api_server</b><br/>authz.clearance.denied"]
+        B3["<b>edge_router</b><br/>router.target.unknown<br/>router.request.received"]
+    end
+
+    subgraph DETECT["Detection"]
+        C1["Sigma<br/>t1110_brute_force_login"]
+        C2["Sigma<br/>t1078_token_abuse"]
+        C3["Sigma<br/>t1190_edge_probing"]
+    end
+
+    subgraph PROOF["Validation"]
+        D1["validator<br/>PASS 4/1"]
+        D2["validator<br/>PASS 3/1"]
+        D3["validator<br/>PASS 4/1"]
+    end
+
+    A1 --> B1 --> C1 --> D1
+    A2 --> B1
+    A2 --> B2
+    B1 --> C2
+    B2 --> C2
+    C2 --> D2
+    A3 --> B3 --> C3 --> D3
+
+    classDef offense fill:#f44336,stroke:#8b1a1a,color:#fff
+    classDef tele    fill:#3776AB,stroke:#1a3a5c,color:#fff
+    classDef detect  fill:#ff9800,stroke:#8b5200,color:#fff
+    classDef proof   fill:#4caf50,stroke:#1b5e20,color:#fff
+
+    class A1,A2,A3 offense
+    class B1,B2,B3 tele
+    class C1,C2,C3 detect
+    class D1,D2,D3 proof
+```
 </p>
 
 ### The pipeline
