@@ -60,6 +60,46 @@ The two layers are designed together: the overlay produces the telemetry, the de
 Most portfolio security projects pick one side of the fence: build a secure system **or** build a detection pipeline. Overlay Ledger does both, you can't detect what you can't see, and you can't trust what you can't verify.
 
 ---
+### Architecture
+
+```mermaid
+flowchart TB
+    Browser[" Browser / API Client<br/><i>external network</i>"]
+
+    subgraph EDGE["External Boundary"]
+        ER[" <b>Edge Router</b><br/>0.0.0.0:9999<br/><i>TLS 1.3 — only exposed port</i>"]
+    end
+
+    subgraph INTERNAL["Internal Overlay — 127.0.0.1 only"]
+        direction LR
+        GW[" <b>Gateway</b><br/>:5000<br/>JWT auth"]
+        API[" <b>API Server</b><br/>:5001<br/>Documents"]
+        CTL[" <b>Controller</b><br/>:8080<br/>Policy (PDP)"]
+    end
+
+    subgraph LEDGER["Overlay Ledger"]
+        LOG[(" logs/zta.jsonl<br/><i>ECS-aligned JSONL</i><br/>trace.id correlated")]
+    end
+
+    Browser -->|HTTPS| ER
+    ER -->|mTLS| GW
+    ER -->|mTLS| API
+    ER -->|mTLS| CTL
+    GW -.emit.-> LOG
+    API -.emit.-> LOG
+    CTL -.emit.-> LOG
+    ER -.emit.-> LOG
+
+    classDef external fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+    classDef edge    fill:#f44336,stroke:#8b1a1a,stroke-width:2px,color:#fff
+    classDef internal fill:#3776AB,stroke:#1a3a5c,stroke-width:2px,color:#fff
+    classDef ledger  fill:#4caf50,stroke:#1b5e20,stroke-width:2px,color:#fff
+
+    class Browser external
+    class ER edge
+    class GW,API,CTL internal
+    class LOG ledger
+```
 
 ### Components
 
